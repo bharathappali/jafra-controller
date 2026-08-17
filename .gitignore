@@ -1,0 +1,20 @@
+# Build output
+/controller
+/bin/
+*.exe
+*.test
+*.out
+
+# Go coverage
+coverage.out
+coverage.html
+*.coverprofile
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

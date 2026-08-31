@@ -1,6 +1,6 @@
 # Jafra Controller
 
-`jafra-controller` version `0.1.0` is a Go mutating admission webhook. It
+`jafra-controller` version `0.0.1` is a Go mutating admission webhook. It
 validates the Jafra Pod opt-in API and injects async-profiler into explicitly
 selected Java containers.
 
@@ -52,7 +52,7 @@ Successful mutation adds:
 metadata:
   annotations:
     jafra.io/injected: "true"
-    jafra.io/injected-version: "0.1.0"
+    jafra.io/injected-version: "0.0.1"
 ```
 
 The mutation also adds:
@@ -75,7 +75,7 @@ cannot safely evaluate and merge it.
 ```bash
 go test ./...
 go build ./cmd/controller
-docker build -t quay.io/bharathappali/jafra-controller:0.1.0 .
+docker build -t quay.io/bharathappali/jafra-controller:0.0.1 .
 ```
 
 Push the image or load it into the demonstration cluster before deployment.
@@ -111,11 +111,11 @@ kubectl get pod profiled-pod -o yaml
 ```
 
 `plain-pod` must have no Jafra injection annotation. `profiled-pod` must have
-both injection annotations and report version `0.1.0`.
+both injection annotations and report version `0.0.1`.
 
 ## Checkpoint 2 demonstration
 
-Rebuild and load or push the `0.1.0` image, restart the controller, then run:
+Rebuild and load or push the `0.0.1` image, restart the controller, then run:
 
 ```bash
 kubectl apply -f deploy/examples/auth-cache.yaml

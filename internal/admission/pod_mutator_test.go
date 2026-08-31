@@ -17,7 +17,7 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-const testVersion = "0.1.0"
+const testVersion = "0.0.1"
 
 func TestPodMutator(t *testing.T) {
 	tests := []struct {

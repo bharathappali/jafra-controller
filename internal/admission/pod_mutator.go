@@ -23,7 +23,6 @@ const (
 	profilerInitName    = "jafra-profiler-init"
 	profilerImage       = "quay.io/bharathappali/async-profiler:v4.5"
 	profilerLibraryPath = "/jafra-agent/libasyncProfiler.so"
-	recordingRoot       = "/var/lib/jafra/recordings"
 )
 
 var (
@@ -170,14 +169,10 @@ func injectProfiler(
 			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	}
-	hostPathType := corev1.HostPathDirectoryOrCreate
 	recordingVolume := corev1.Volume{
 		Name: recordingVolumeName,
 		VolumeSource: corev1.VolumeSource{
-			HostPath: &corev1.HostPathVolumeSource{
-				Path: recordingRoot,
-				Type: &hostPathType,
-			},
+			EmptyDir: &corev1.EmptyDirVolumeSource{},
 		},
 	}
 	if err := ensureVolume(pod, emptyDirVolume); err != nil {
@@ -209,7 +204,6 @@ func injectProfiler(
 }
 
 func profilerInitContainer(targets []string) corev1.Container {
-	runAsNonRoot := false
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	return corev1.Container{
@@ -228,12 +222,11 @@ chmod 0555 ` + profilerLibraryPath + `
 old_ifs="${IFS}"
 IFS=','
 for container in ${JAFRA_TARGET_CONTAINERS}; do
-  directory="/jafra-host/${JAFRA_NAMESPACE}/${JAFRA_POD_UID}/${container}"
+  directory="/jafra-recordings/${JAFRA_NAMESPACE}/${JAFRA_POD_UID}/${container}"
   echo "creating recording directory ${directory}"
   mkdir -p "${directory}"
   chmod 0777 "${directory}"
   printf '%s\n' "{\"namespace\":\"${JAFRA_NAMESPACE}\",\"podName\":\"${JAFRA_POD_NAME}\",\"podUid\":\"${JAFRA_POD_UID}\",\"container\":\"${container}\"}" > "${directory}/.jafra-identity.json"
-  chmod 0644 "${directory}/.jafra-identity.json"
 done
 IFS="${old_ifs}"
 echo "Jafra profiler initialization complete"`},
@@ -245,10 +238,9 @@ echo "Jafra profiler initialization complete"`},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: profilerVolumeName, MountPath: "/jafra-agent"},
-			{Name: recordingVolumeName, MountPath: "/jafra-host"},
+			{Name: recordingVolumeName, MountPath: "/jafra-recordings"},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:             &runAsNonRoot,
 			AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 			ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
 			Capabilities: &corev1.Capabilities{

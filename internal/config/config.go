@@ -2,7 +2,7 @@ package config
 
 const (
 	// BuildVersion is recorded on every Pod mutated by this controller.
-	BuildVersion = "0.0.1"
+	BuildVersion = "0.0.2"
 
 	DefaultMetricsAddress = ":8080"
 	DefaultProbeAddress   = ":8081"

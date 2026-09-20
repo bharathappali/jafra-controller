@@ -17,7 +17,7 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
-const testVersion = "0.0.1"
+const testVersion = "0.0.2"
 
 func TestPodMutator(t *testing.T) {
 	tests := []struct {
@@ -165,9 +165,16 @@ func TestProfilerMutation(t *testing.T) {
 
 	assertNamedCount(t, volumeNames(mutated.Spec.Volumes), profilerVolumeName, 1)
 	assertNamedCount(t, volumeNames(mutated.Spec.Volumes), recordingVolumeName, 1)
+	recordingVol := findVolume(t, mutated.Spec.Volumes, recordingVolumeName)
+	if recordingVol.EmptyDir == nil {
+		t.Errorf("recording volume should be emptyDir, got %#v", recordingVol.VolumeSource)
+	}
 	assertNamedCount(t, containerNames(mutated.Spec.InitContainers), profilerInitName, 1)
 	assertNamedCount(t, containerNames(mutated.Spec.InitContainers), "application-init", 1)
 	init := findContainer(t, mutated.Spec.InitContainers, profilerInitName)
+	if !strings.Contains(strings.Join(init.Args, " "), "chmod 0777") {
+		t.Error("init container did not chmod recording directory for cross-UID writes")
+	}
 	if !strings.Contains(strings.Join(init.Args, " "), ".jafra-identity.json") {
 		t.Error("init container did not write .jafra-identity.json")
 	}
@@ -364,6 +371,17 @@ func applyResponsePatch(t *testing.T, raw []byte, response cradmission.Response)
 		t.Fatalf("decode mutated Pod: %v", err)
 	}
 	return mutated
+}
+
+func findVolume(t *testing.T, volumes []corev1.Volume, name string) corev1.Volume {
+	t.Helper()
+	for _, volume := range volumes {
+		if volume.Name == name {
+			return volume
+		}
+	}
+	t.Fatalf("volume %q not found", name)
+	return corev1.Volume{}
 }
 
 func findContainer(t *testing.T, containers []corev1.Container, name string) *corev1.Container {

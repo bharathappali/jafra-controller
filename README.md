@@ -1,6 +1,6 @@
 # Jafra Controller
 
-`jafra-controller` version `0.0.1` is a Go mutating admission webhook. It
+`jafra-controller` version `0.0.2` is a Go mutating admission webhook. It
 validates the Jafra Pod opt-in API and injects async-profiler into explicitly
 selected Java containers.
 
@@ -52,13 +52,13 @@ Successful mutation adds:
 metadata:
   annotations:
     jafra.io/injected: "true"
-    jafra.io/injected-version: "0.0.1"
+    jafra.io/injected-version: "0.0.2"
 ```
 
 The mutation also adds:
 
 - An `emptyDir` containing only `/jafra-agent/libasyncProfiler.so`.
-- A node-local `hostPath` rooted at `/var/lib/jafra/recordings`.
+- An `emptyDir` named `jafra-recordings` for JFR output.
 - An init container using
   `quay.io/bharathappali/async-profiler:v4.5`.
 - A per-container `/jfr-data` mount using the namespace, Pod UID, and
@@ -75,7 +75,7 @@ cannot safely evaluate and merge it.
 ```bash
 go test ./...
 go build ./cmd/controller
-docker build -t quay.io/bharathappali/jafra-controller:0.0.1 .
+docker build -t quay.io/bharathappali/jafra-controller:0.0.2 .
 ```
 
 Push the image or load it into the demonstration cluster before deployment.
@@ -111,11 +111,11 @@ kubectl get pod profiled-pod -o yaml
 ```
 
 `plain-pod` must have no Jafra injection annotation. `profiled-pod` must have
-both injection annotations and report version `0.0.1`.
+both injection annotations and report version `0.0.2`.
 
 ## Checkpoint 2 demonstration
 
-Rebuild and load or push the `0.0.1` image, restart the controller, then run:
+Rebuild and load or push the `0.0.2` image, restart the controller, then run:
 
 ```bash
 kubectl apply -f deploy/examples/auth-cache.yaml
@@ -149,10 +149,8 @@ and JFR overhead stay under the cgroup limit. `proc` sampling is rejected.
   availability.
 - The controller intentionally fails admission for opted-in Pods with invalid
   configuration.
-- The node-local demonstration requires `hostPath`, so a namespace enforcing
-  the Restricted Pod Security Standard can reject profiled Pods.
-- Recording leaf directories use mode `0777` because application UID
-  discovery is not implemented. This is demonstration-only technical debt.
+- Opted-in Pods use `emptyDir` recordings only. The `jafra-agent` DaemonSet
+  reads those files from the kubelet pod volume path on each node.
 - The selected container mount relies on kubelet accepting an init-created
   `subPathExpr`. If the target cluster rejects it, mount the recording root
   temporarily and document the broader filesystem exposure; do not silently

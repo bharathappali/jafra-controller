@@ -79,28 +79,25 @@ docker build -t quay.io/bharathappali/jafra-controller:0.0.2 .
 ```
 
 Push the image or load it into the demonstration cluster before deployment.
-If a different registry is used, update `deploy/controller/deployment.yaml`.
 
 ## Deploy
 
-The cluster must already have cert-manager installed. Deploy in this order so
-the webhook is not registered before its TLS endpoint is ready:
+From the **jafra-io** repository root, use `./install-jafra.sh` or `./pull-jafra.sh`
+(Kind) or `./install-jafra.sh --target openshift` (OpenShift). Set
+`JAFRA_REGISTRY` and `JAFRA_VERSION` before install; Kustomize applies the tag
+from `deploy/kustomize/`.
+
+Manual phased apply (cert-manager required; run from jafra-io root):
 
 ```bash
-kubectl apply -f deploy/controller/namespace.yaml
-kubectl apply -f deploy/controller/rbac.yaml
-kubectl apply -f deploy/controller/certificate.yaml
-kubectl wait --for=condition=Ready certificate/jafra-controller-serving-cert \
-  -n jafra-system --timeout=120s
-kubectl apply -f deploy/controller/service.yaml
-kubectl apply -f deploy/controller/deployment.yaml
-kubectl rollout status deployment/jafra-controller \
-  -n jafra-system --timeout=120s
-kubectl apply -f deploy/controller/webhook.yaml
+export JAFRA_VERSION=0.0.2   # optional override
+./install-jafra.sh --deploy-only   # or apply phases via scripts/lib/deploy-jafra.sh
 ```
 
-Run these commands from the repository root; build commands run from
-`jafra-controller/`.
+Cluster-scoped webhook: `kubectl apply -f deploy/controller/webhook.yaml` (after
+the controller Service is up).
+
+Build commands run from `jafra-controller/`.
 
 ## Checkpoint 1 demonstration
 

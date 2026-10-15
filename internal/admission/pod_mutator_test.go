@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/evanphx/json-patch/v5"
 	"github.com/bharathappali/jafra-controller/internal/annotations"
+	"github.com/evanphx/json-patch/v5"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -178,6 +178,12 @@ func TestProfilerMutation(t *testing.T) {
 	if !strings.Contains(strings.Join(init.Args, " "), ".jafra-identity.json") {
 		t.Error("init container did not write .jafra-identity.json")
 	}
+	initScript := strings.Join(init.Args, " ")
+	for _, name := range []string{"jafra-aggressive.jfc", "jafra-medium.jfc", "jafra-low.jfc"} {
+		if !strings.Contains(initScript, name) {
+			t.Errorf("init container did not copy %s", name)
+		}
+	}
 
 	if !reflect.DeepEqual(mutated.Spec.SecurityContext, originalSecurityContext) {
 		t.Errorf("Pod security context changed: got %#v, want %#v", mutated.Spec.SecurityContext, originalSecurityContext)
@@ -191,11 +197,15 @@ func TestProfilerMutation(t *testing.T) {
 	if findEnv(worker, "JAFRA_POD_UID") != nil {
 		t.Error("unselected worker container received Jafra environment")
 	}
-	wantAgent := "-agentpath:/jafra-agent/libasyncProfiler.so=start,event=ctimer,interval=20ms,wall=100ms,alloc=1m,live,lock=10ms,nativemem=2m,nativelock=10ms,memlimit=128m,loop=5m,chunktime=5s,chunksize=32m,jfrsync=default,file=/jfr-data/profile-%n.jfr"
+	wantAgent := "-agentpath:/jafra-agent/libasyncProfiler.so=start,event=ctimer,interval=20ms,wall=100ms,alloc=1m,lock=5ms,nativemem=2m,nativelock=5ms,memlimit=128m,loop=10m,chunktime=5s,chunksize=32m,jfrsync=/jafra-agent/jafra-medium.jfc,file=/jfr-data/profile-%n.jfr"
 	if got := findEnv(app, "JAVA_TOOL_OPTIONS"); got == nil ||
 		!strings.Contains(got.Value, "-Xms256m -Xmx512m -Xlog:gc") ||
+		!strings.Contains(got.Value, "-XX:NativeMemoryTracking=summary") ||
 		!strings.Contains(got.Value, wantAgent) {
 		t.Errorf("JAVA_TOOL_OPTIONS was not safely appended: %#v", got)
+	}
+	if got := findEnv(app, "JAVA_TOOL_OPTIONS"); got != nil && strings.Count(got.Value, "NativeMemoryTracking") != 1 {
+		t.Errorf("NativeMemoryTracking count = %d, want 1", strings.Count(got.Value, "NativeMemoryTracking"))
 	}
 	assertNamedCount(t, mountNames(app.VolumeMounts), "application-data", 1)
 	assertNamedCount(t, mountNames(app.VolumeMounts), profilerVolumeName, 1)
@@ -220,6 +230,28 @@ func TestProfilerMutation(t *testing.T) {
 	assertNamedCount(t, mountNames(app.VolumeMounts), recordingVolumeName, 1)
 	if got := strings.Count(findEnv(app, "JAVA_TOOL_OPTIONS").Value, "-agentpath:"+profilerLibraryPath); got != 1 {
 		t.Errorf("profiler agent count = %d, want 1", got)
+	}
+}
+
+func TestNativeMemoryTrackingAlreadySet(t *testing.T) {
+	pod := testPod("default", map[string]string{
+		annotations.EnabledLabel: annotations.EnabledValue,
+		annotations.ModeLabel:    annotations.ContinuousMode,
+	}, map[string]string{
+		annotations.ContainersAnnotation: "app",
+	}, "app")
+	pod.Spec.Containers[0].Env = []corev1.EnvVar{
+		{Name: "JAVA_TOOL_OPTIONS", Value: "-XX:NativeMemoryTracking=detail -Xmx256m"},
+	}
+	request, raw := admissionRequest(t, pod)
+	response := NewPodMutator(testVersion).Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("expected mutation to be allowed: %#v", response.Result)
+	}
+	mutated := applyResponsePatch(t, raw, response)
+	got := findEnv(findContainer(t, mutated.Spec.Containers, "app"), "JAVA_TOOL_OPTIONS")
+	if got == nil || strings.Count(got.Value, "NativeMemoryTracking") != 1 || !strings.Contains(got.Value, "NativeMemoryTracking=detail") {
+		t.Fatalf("existing NativeMemoryTracking was rewritten: %#v", got)
 	}
 }
 

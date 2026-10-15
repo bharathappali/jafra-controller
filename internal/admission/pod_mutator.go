@@ -219,6 +219,17 @@ fi
 echo "copying ${library} to ` + profilerLibraryPath + `"
 cp "${library}" ` + profilerLibraryPath + `
 chmod 0555 ` + profilerLibraryPath + `
+jfc_dir=/opt/async-profiler/jfc
+for name in jafra-aggressive.jfc jafra-medium.jfc jafra-low.jfc; do
+  source="${jfc_dir}/${name}"
+  if [ ! -f "${source}" ]; then
+    echo "JFC preset not found at ${source}" >&2
+    exit 1
+  fi
+  echo "copying ${source} to /jafra-agent/${name}"
+  cp "${source}" "/jafra-agent/${name}"
+  chmod 0444 "/jafra-agent/${name}"
+done
 old_ifs="${IFS}"
 IFS=','
 for container in ${JAFRA_TARGET_CONTAINERS}; do
@@ -289,7 +300,7 @@ func mutateTargetContainer(
 		}
 	}
 
-	return appendJavaToolOptions(container, profile.AgentOption(profilerLibraryPath))
+	return appendJavaToolOptions(container, profile.NativeMemoryOption(), profile.AgentOption(profilerLibraryPath))
 }
 
 func ensureVolume(pod *corev1.Pod, expected corev1.Volume) error {
@@ -352,7 +363,8 @@ func ensureVolumeMount(container *corev1.Container, expected corev1.VolumeMount)
 	return nil
 }
 
-func appendJavaToolOptions(container *corev1.Container, option string) error {
+func appendJavaToolOptions(container *corev1.Container, nativeMemory, agentOption string) error {
+	suffix := agentOption
 	for index := range container.Env {
 		existing := &container.Env[index]
 		if existing.Name != "JAVA_TOOL_OPTIONS" {
@@ -364,12 +376,18 @@ func appendJavaToolOptions(container *corev1.Container, option string) error {
 		if strings.Contains(existing.Value, "-agentpath:"+profilerLibraryPath) {
 			return nil
 		}
-		existing.Value = strings.TrimSpace(strings.TrimSpace(existing.Value) + " " + option)
+		if nativeMemory != "" && !strings.Contains(existing.Value, "NativeMemoryTracking") {
+			suffix = nativeMemory + " " + agentOption
+		}
+		existing.Value = strings.TrimSpace(strings.TrimSpace(existing.Value) + " " + suffix)
 		return nil
+	}
+	if nativeMemory != "" {
+		suffix = nativeMemory + " " + agentOption
 	}
 	container.Env = append(container.Env, corev1.EnvVar{
 		Name:  "JAVA_TOOL_OPTIONS",
-		Value: option,
+		Value: suffix,
 	})
 	return nil
 }

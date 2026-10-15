@@ -15,19 +15,7 @@ metadata:
     jafra.io/mode: "continuous"
   annotations:
     jafra.io/containers: "application-container"
-    jafra.io/event: "ctimer"
-    jafra.io/interval: "20ms"
-    jafra.io/wall: "100ms"
-    jafra.io/alloc: "1m"
-    jafra.io/live: "true"
-    jafra.io/lock: "10ms"
-    jafra.io/nativemem: "2m"
-    jafra.io/nativelock: "10ms"
-    jafra.io/memlimit: "128m"
-    jafra.io/loop: "1m"
-    jafra.io/chunktime: "5s"
-    jafra.io/chunksize: "32m"
-    jafra.io/jfrsync: "default"
+    jafra.io/profile: "medium"
 ```
 
 The target list is comma-separated and every named container must exist. The
@@ -35,16 +23,26 @@ controller skips unlabelled Pods, Pods without `continuous` mode, previously
 injected Pods, and Pods in `kube-system` or `jafra-system`. It rejects invalid
 modes, empty target lists, and unknown target containers.
 
-Profiler annotations are optional. Production-oriented defaults are
-`event=ctimer`, `interval=20ms`, `wall=100ms`, `alloc=1m`, `live=true`,
-`lock=10ms`, `nativemem=2m`, `nativelock=10ms`, `memlimit=128m`, `loop=5m`,
-`chunktime=5s`, `chunksize=32m`, and `jfrsync=default`. `ctimer` is used
-instead of Linux `perf_event_open` so application Pods do not need extra
-privileges. `jfrsync=default` starts JDK Flight Recorder beside the
-profiler so GC pauses, compilation, and I/O land in the same JFR file.
-Set `jafra.io/jfrsync: "none"` to turn that off. A `chunktime` below five
-seconds is rejected because async-profiler cannot honor it. `proc`
-host-process sampling is not injected.
+`jafra.io/profile` selects `aggressive`, `medium`, or `low`. The default is
+`medium`: `event=ctimer`, `interval=20ms`, `wall=100ms`, `alloc=1m`,
+`lock=5ms`, `nativemem=2m`, `nativelock=5ms`, `memlimit=128m`, `loop=10m`,
+`chunktime=5s`, `chunksize=32m`, and
+`jfrsync=/jafra-agent/jafra-medium.jfc`. Allocation live mode is off.
+`ctimer` is used instead of Linux `perf_event_open` so application Pods do
+not need extra privileges. The init container copies `jafra-aggressive.jfc`,
+`jafra-medium.jfc`, and `jafra-low.jfc` next to `libasyncProfiler.so`, and
+the JVM loads the file for the selected profile. Set `jafra.io/jfrsync` to
+`default` or `profile` to pass that JDK configuration name to async-profiler
+instead of a Jafra file, or `none` to record profiler samples only. Custom
+paths are rejected. `jafra.io/chunk-age` is an alias of `jafra.io/chunktime`;
+if both are set they must match, and either value below five seconds is
+rejected because async-profiler cannot honor it. Five seconds is also the
+default, so a finished chunk can be streamed about that often.
+`jafra.io/nmt` defaults to `summary` and appends
+`-XX:NativeMemoryTracking=summary` unless that flag is already present.
+`jafra.io/alloc-live: "true"` adds the `live` token. An explicit per-knob
+annotation replaces that one preset field. `proc` host-process sampling is
+not injected.
 
 Successful mutation adds:
 
@@ -57,7 +55,8 @@ metadata:
 
 The mutation also adds:
 
-- An `emptyDir` containing only `/jafra-agent/libasyncProfiler.so`.
+- An `emptyDir` containing `/jafra-agent/libasyncProfiler.so` and the three
+  `jafra-*.jfc` presets.
 - An `emptyDir` named `jafra-recordings` for JFR output.
 - An init container using
   `quay.io/bharathappali/async-profiler:v4.5`.
@@ -135,7 +134,8 @@ Metrics are served on port `8080`. Health and readiness checks are served on
 port `8081`.
 
 The bounded profiler string injected for `auth-cache` includes
-`event=ctimer,interval=20ms,wall=100ms,alloc=1m,live,lock=10ms,nativemem=2m,nativelock=10ms,memlimit=128m,jfrsync=default`.
+`event=ctimer,interval=20ms,wall=100ms,alloc=1m,lock=5ms,nativemem=2m,nativelock=5ms,memlimit=128m,loop=10m,chunktime=5s,jfrsync=/jafra-agent/jafra-medium.jfc`
+and `-XX:NativeMemoryTracking=summary`.
 The example container requests `768Mi` and limits `1Gi` so heap plus native
 and JFR overhead stay under the cgroup limit. `proc` sampling is rejected.
 

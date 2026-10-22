@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration version="2.0" label="jafra-medium" description="fixture" provider="Jafra">
+  <event name="jdk.Compilation">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">500 ms</setting>
+  </event>
+  <event name="jdk.MethodTiming">
+    <setting name="enabled">true</setting>
+    <setting name="period">endChunk</setting>
+    <setting name="filter">@jakarta.ws.rs.Path</setting>
+  </event>
+  <event name="jdk.MethodTrace">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">500 ms</setting>
+    <setting name="filter">@jakarta.ws.rs.Path</setting>
+    <setting name="stackTrace">false</setting>
+  </event>
+  <event name="jdk.SocketRead">
+    <setting name="enabled">true</setting>
+    <setting name="threshold">500 ms</setting>
+  </event>
+</configuration>

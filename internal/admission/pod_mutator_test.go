@@ -197,15 +197,12 @@ func TestProfilerMutation(t *testing.T) {
 	if findEnv(worker, "JAFRA_POD_UID") != nil {
 		t.Error("unselected worker container received Jafra environment")
 	}
-	wantAgent := "-agentpath:/jafra-agent/libasyncProfiler.so=start,event=ctimer,interval=20ms,wall=100ms,alloc=1m,lock=5ms,nativemem=2m,nativelock=5ms,memlimit=128m,loop=10m,chunktime=5s,chunksize=32m,jfrsync=/jafra-agent/jafra-medium.jfc,file=/jfr-data/profile-%n.jfr"
+	wantAgent := "-agentpath:/jafra-agent/libasyncProfiler.so=start,event=ctimer,interval=10ms,wall=100ms,alloc=1m,lock=1ms,nativemem=16m,nofree,cstack=vm,jstackdepth=512,memlimit=32m,loop=5s,jfrsync=/jafra-agent/jafra-medium.jfc,file=/jfr-data/profile-%n.jfr"
 	if got := findEnv(app, "JAVA_TOOL_OPTIONS"); got == nil ||
 		!strings.Contains(got.Value, "-Xms256m -Xmx512m -Xlog:gc") ||
-		!strings.Contains(got.Value, "-XX:NativeMemoryTracking=summary") ||
+		strings.Contains(got.Value, "NativeMemoryTracking") ||
 		!strings.Contains(got.Value, wantAgent) {
 		t.Errorf("JAVA_TOOL_OPTIONS was not safely appended: %#v", got)
-	}
-	if got := findEnv(app, "JAVA_TOOL_OPTIONS"); got != nil && strings.Count(got.Value, "NativeMemoryTracking") != 1 {
-		t.Errorf("NativeMemoryTracking count = %d, want 1", strings.Count(got.Value, "NativeMemoryTracking"))
 	}
 	assertNamedCount(t, mountNames(app.VolumeMounts), "application-data", 1)
 	assertNamedCount(t, mountNames(app.VolumeMounts), profilerVolumeName, 1)
@@ -215,7 +212,7 @@ func TestProfilerMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("select Pod: %v", err)
 	}
-	profile, err := annotations.ResolveProfilerConfig(&pod)
+	profile, _, err := annotations.ResolveProfilerConfig(&pod)
 	if err != nil {
 		t.Fatalf("resolve profiler config: %v", err)
 	}
@@ -239,6 +236,7 @@ func TestNativeMemoryTrackingAlreadySet(t *testing.T) {
 		annotations.ModeLabel:    annotations.ContinuousMode,
 	}, map[string]string{
 		annotations.ContainersAnnotation: "app",
+		annotations.JdkNmtAnnotation:     "enabled",
 	}, "app")
 	pod.Spec.Containers[0].Env = []corev1.EnvVar{
 		{Name: "JAVA_TOOL_OPTIONS", Value: "-XX:NativeMemoryTracking=detail -Xmx256m"},
@@ -252,6 +250,86 @@ func TestNativeMemoryTrackingAlreadySet(t *testing.T) {
 	got := findEnv(findContainer(t, mutated.Spec.Containers, "app"), "JAVA_TOOL_OPTIONS")
 	if got == nil || strings.Count(got.Value, "NativeMemoryTracking") != 1 || !strings.Contains(got.Value, "NativeMemoryTracking=detail") {
 		t.Fatalf("existing NativeMemoryTracking was rewritten: %#v", got)
+	}
+}
+
+func TestRemovedChunkTimeAnnotationIsAdmittedWithWarning(t *testing.T) {
+	pod := testPod("default", map[string]string{
+		annotations.EnabledLabel: annotations.EnabledValue,
+		annotations.ModeLabel:    annotations.ContinuousMode,
+	}, map[string]string{
+		annotations.ContainersAnnotation: "app",
+		annotations.ChunkTimeAnnotation:  "1s",
+	}, "app")
+	request, raw := admissionRequest(t, pod)
+	response := NewPodMutator(testVersion).Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("expected mutation to be allowed: %#v", response.Result)
+	}
+	wantWarning := annotations.ChunkTimeAnnotation + " is no longer supported and was ignored"
+	if len(response.Warnings) != 1 || response.Warnings[0] != wantWarning {
+		t.Fatalf("warnings = %#v, want [%q]", response.Warnings, wantWarning)
+	}
+	mutated := applyResponsePatch(t, raw, response)
+	got := findEnv(findContainer(t, mutated.Spec.Containers, "app"), "JAVA_TOOL_OPTIONS")
+	wantAgent := "-agentpath:/jafra-agent/libasyncProfiler.so=start,event=ctimer,interval=10ms,wall=100ms,alloc=1m,lock=1ms,nativemem=16m,nofree,cstack=vm,jstackdepth=512,memlimit=32m,loop=5s,jfrsync=/jafra-agent/jafra-medium.jfc,file=/jfr-data/profile-%n.jfr"
+	if got == nil || !strings.Contains(got.Value, wantAgent) || strings.Contains(got.Value, "chunktime=") {
+		t.Fatalf("JAVA_TOOL_OPTIONS = %#v", got)
+	}
+}
+
+func TestLatencyThresholdInitContainer(t *testing.T) {
+	defaultInit := admitInitContainer(t, nil)
+	if got := findEnv(defaultInit, "JAFRA_LATENCY_THRESHOLD"); got == nil || got.Value != "500 ms" {
+		t.Fatalf("default JAFRA_LATENCY_THRESHOLD = %#v", got)
+	}
+	assertMethodTraceSedScript(t, strings.Join(defaultInit.Args, "\n"))
+
+	customInit := admitInitContainer(t, map[string]string{
+		annotations.LatencyThresholdAnnotation: "250ms",
+	})
+	if got := findEnv(customInit, "JAFRA_LATENCY_THRESHOLD"); got == nil || got.Value != "250 ms" {
+		t.Fatalf("JAFRA_LATENCY_THRESHOLD = %#v, want 250 ms", got)
+	}
+}
+
+func admitInitContainer(t *testing.T, extra map[string]string) *corev1.Container {
+	t.Helper()
+	podAnnotations := map[string]string{annotations.ContainersAnnotation: "app"}
+	for key, value := range extra {
+		podAnnotations[key] = value
+	}
+	pod := testPod("default", map[string]string{
+		annotations.EnabledLabel: annotations.EnabledValue,
+		annotations.ModeLabel:    annotations.ContinuousMode,
+	}, podAnnotations, "app")
+	request, raw := admissionRequest(t, pod)
+	response := NewPodMutator(testVersion).Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("expected mutation to be allowed: %#v", response.Result)
+	}
+	mutated := applyResponsePatch(t, raw, response)
+	return findContainer(t, mutated.Spec.InitContainers, profilerInitName)
+}
+
+func assertMethodTraceSedScript(t *testing.T, script string) {
+	t.Helper()
+	if strings.Contains(script, "sed -i") {
+		t.Fatalf("init script uses sed -i:\n%s", script)
+	}
+	if !strings.Contains(script, methodTraceSedProgram) {
+		t.Fatalf("init script does not contain methodTraceSedProgram:\n%s", script)
+	}
+	loopStart := strings.Index(script, "for name in jafra-aggressive.jfc")
+	loopEnd := strings.Index(script, "old_ifs=")
+	if loopStart < 0 || loopEnd < loopStart {
+		t.Fatalf("JFC copy loop not found:\n%s", script)
+	}
+	loop := script[loopStart:loopEnd]
+	sedAt := strings.Index(loop, methodTraceSedProgram)
+	chmodAt := strings.Index(loop, "chmod 0444")
+	if sedAt < 0 || chmodAt < sedAt || strings.Count(script, "chmod 0444") != 1 {
+		t.Fatalf("chmod 0444 must follow sed inside the JFC loop:\n%s", loop)
 	}
 }
 
@@ -277,13 +355,6 @@ func TestProfilerMutationRejectsUnsafeConfiguration(t *testing.T) {
 				}
 			},
 			wantMessagePart: "valueFrom",
-		},
-		{
-			name: "chunktime below async-profiler minimum",
-			configure: func(pod *corev1.Pod) {
-				pod.Annotations[annotations.ChunkTimeAnnotation] = "1s"
-			},
-			wantMessagePart: "at least 5s",
 		},
 		{
 			name: "unsafe event separator",

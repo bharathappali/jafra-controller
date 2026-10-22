@@ -23,6 +23,10 @@ const (
 	profilerInitName    = "jafra-profiler-init"
 	profilerImage       = "quay.io/bharathappali/async-profiler:v4.5"
 	profilerLibraryPath = "/jafra-agent/libasyncProfiler.so"
+
+	// methodTraceSedProgram is spliced between single quotes. Its own quotes
+	// expand JAFRA_LATENCY_THRESHOLD inside the sed replacement.
+	methodTraceSedProgram = `/<event name="jdk.MethodTrace">/,/<\/event>/ s|<setting name="threshold">[^<]*</setting>|<setting name="threshold">'"${JAFRA_LATENCY_THRESHOLD}"'</setting>|`
 )
 
 var (
@@ -120,7 +124,7 @@ func (m *PodMutator) Handle(ctx context.Context, request cradmission.Request) cr
 		return cradmission.Allowed("Pod did not require Jafra mutation")
 	}
 
-	profile, err := annotations.ResolveProfilerConfig(&pod)
+	profile, warnings, err := annotations.ResolveProfilerConfig(&pod)
 	if err != nil {
 		admissionRequests.WithLabelValues("rejected").Inc()
 		mutationFailures.Inc()
@@ -155,7 +159,10 @@ func (m *PodMutator) Handle(ctx context.Context, request cradmission.Request) cr
 		"containers", selection.Containers,
 		"controllerVersion", m.version,
 	)
-	return cradmission.PatchResponseFromRaw(request.Object.Raw, mutated)
+	for _, warning := range warnings {
+		logger.Info("jafra configuration warning", "warning", warning)
+	}
+	return cradmission.PatchResponseFromRaw(request.Object.Raw, mutated).WithWarnings(warnings...)
 }
 
 func injectProfiler(
@@ -182,7 +189,7 @@ func injectProfiler(
 		return err
 	}
 
-	initContainer := profilerInitContainer(selection.Containers)
+	initContainer := profilerInitContainer(selection.Containers, profile.LatencyThreshold)
 	if err := ensureInitContainer(pod, initContainer); err != nil {
 		return err
 	}
@@ -203,7 +210,7 @@ func injectProfiler(
 	return nil
 }
 
-func profilerInitContainer(targets []string) corev1.Container {
+func profilerInitContainer(targets []string, latencyThreshold string) corev1.Container {
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	return corev1.Container{
@@ -222,13 +229,17 @@ chmod 0555 ` + profilerLibraryPath + `
 jfc_dir=/opt/async-profiler/jfc
 for name in jafra-aggressive.jfc jafra-medium.jfc jafra-low.jfc; do
   source="${jfc_dir}/${name}"
+  target="/jafra-agent/${name}"
   if [ ! -f "${source}" ]; then
     echo "JFC preset not found at ${source}" >&2
     exit 1
   fi
-  echo "copying ${source} to /jafra-agent/${name}"
-  cp "${source}" "/jafra-agent/${name}"
-  chmod 0444 "/jafra-agent/${name}"
+  echo "copying ${source} to ${target} (jdk.MethodTrace threshold ${JAFRA_LATENCY_THRESHOLD})"
+  sed '` + methodTraceSedProgram + `' "${source}" > "${target}"
+  if ! sed -n '/<event name="jdk.MethodTrace">/,/<\/event>/p' "${target}" | grep -F -q "<setting name=\"threshold\">${JAFRA_LATENCY_THRESHOLD}</setting>"; then
+    echo "warning: jdk.MethodTrace threshold not found in ${name}; file copied with its own threshold" >&2
+  fi
+  chmod 0444 "${target}"
 done
 old_ifs="${IFS}"
 IFS=','
@@ -246,6 +257,7 @@ echo "Jafra profiler initialization complete"`},
 			downwardEnv("JAFRA_POD_NAME", "metadata.name"),
 			downwardEnv("JAFRA_POD_UID", "metadata.uid"),
 			{Name: "JAFRA_TARGET_CONTAINERS", Value: strings.Join(targets, ",")},
+			{Name: "JAFRA_LATENCY_THRESHOLD", Value: latencyThreshold},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: profilerVolumeName, MountPath: "/jafra-agent"},

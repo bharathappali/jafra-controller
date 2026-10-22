@@ -24,23 +24,28 @@ injected Pods, and Pods in `kube-system` or `jafra-system`. It rejects invalid
 modes, empty target lists, and unknown target containers.
 
 `jafra.io/profile` selects `aggressive`, `medium`, or `low`. The default is
-`medium`: `event=ctimer`, `interval=20ms`, `wall=100ms`, `alloc=1m`,
-`lock=5ms`, `nativemem=2m`, `nativelock=5ms`, `memlimit=128m`, `loop=10m`,
-`chunktime=5s`, `chunksize=32m`, and
-`jfrsync=/jafra-agent/jafra-medium.jfc`. Allocation live mode is off.
+`medium`: `event=ctimer`, `interval=10ms`, `wall=100ms`, `alloc=1m`,
+`lock=1ms`, `nativemem=16m`, `nofree`, `cstack=vm`, `jstackdepth=512`,
+`memlimit=32m`, `loop=5s`, and
+`jfrsync=/jafra-agent/jafra-medium.jfc`. `loop=5s` is fixed, because one
+5 s file is the analysis window.
 `ctimer` is used instead of Linux `perf_event_open` so application Pods do
 not need extra privileges. The init container copies `jafra-aggressive.jfc`,
 `jafra-medium.jfc`, and `jafra-low.jfc` next to `libasyncProfiler.so`, and
 the JVM loads the file for the selected profile. Set `jafra.io/jfrsync` to
 `default` or `profile` to pass that JDK configuration name to async-profiler
 instead of a Jafra file, or `none` to record profiler samples only. Custom
-paths are rejected. `jafra.io/chunk-age` is an alias of `jafra.io/chunktime`;
-if both are set they must match, and either value below five seconds is
-rejected because async-profiler cannot honor it. Five seconds is also the
-default, so a finished chunk can be streamed about that often.
-`jafra.io/nmt` defaults to `summary` and appends
-`-XX:NativeMemoryTracking=summary` unless that flag is already present.
-`jafra.io/alloc-live: "true"` adds the `live` token. An explicit per-knob
+paths are rejected. `jafra.io/nativelock`, `jafra.io/chunktime`,
+`jafra.io/chunk-age`, `jafra.io/chunksize`, `jafra.io/live`,
+`jafra.io/alloc-live`, `jafra.io/loop`, and `jafra.io/nmt` are no longer
+supported and are ignored with a warning.
+Native memory tracking is off by default. Set `jafra.io/jdk-nmt` to
+`"enabled"` to append `-XX:NativeMemoryTracking=summary` unless that flag is
+already present. The flag is injected at pod creation, because NMT cannot be
+enabled at attach time. `jafra.io/latency-threshold` is a JFR timespan, default
+`500 ms`, floor `100 ms`. The init container rewrites only the `jdk.MethodTrace`
+threshold in the pod's copy of the JFC. JDK 25 records that event; JDK 17 and
+21 ignore it. Changing the annotation requires a pod restart. An explicit per-knob
 annotation replaces that one preset field. `proc` host-process sampling is
 not injected.
 
@@ -134,8 +139,8 @@ Metrics are served on port `8080`. Health and readiness checks are served on
 port `8081`.
 
 The bounded profiler string injected for `auth-cache` includes
-`event=ctimer,interval=20ms,wall=100ms,alloc=1m,lock=5ms,nativemem=2m,nativelock=5ms,memlimit=128m,loop=10m,chunktime=5s,jfrsync=/jafra-agent/jafra-medium.jfc`
-and `-XX:NativeMemoryTracking=summary`.
+`event=ctimer,interval=10ms,wall=100ms,alloc=1m,lock=1ms,nativemem=16m,nofree,cstack=vm,jstackdepth=512,memlimit=32m,loop=5s,jfrsync=/jafra-agent/jafra-medium.jfc`.
+`-XX:NativeMemoryTracking=summary` is added only when `jafra.io/jdk-nmt` is `"enabled"`.
 The example container requests `768Mi` and limits `1Gi` so heap plus native
 and JFR overhead stay under the cgroup limit. `proc` sampling is rejected.
 

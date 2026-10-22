@@ -10,56 +10,63 @@ import (
 )
 
 const (
-	EnabledLabel              = "jafra.io/enabled"
-	ModeLabel                 = "jafra.io/mode"
-	ContainersAnnotation      = "jafra.io/containers"
-	EventAnnotation           = "jafra.io/event"
-	IntervalAnnotation        = "jafra.io/interval"
-	WallAnnotation            = "jafra.io/wall"
-	AllocAnnotation           = "jafra.io/alloc"
-	LiveAnnotation            = "jafra.io/live"
-	LockAnnotation            = "jafra.io/lock"
-	NativeMemAnnotation       = "jafra.io/nativemem"
-	NativeLockAnnotation      = "jafra.io/nativelock"
-	MemLimitAnnotation        = "jafra.io/memlimit"
-	LoopAnnotation            = "jafra.io/loop"
-	ChunkTimeAnnotation       = "jafra.io/chunktime"
-	ChunkAgeAnnotation        = "jafra.io/chunk-age"
-	ChunkSizeAnnotation       = "jafra.io/chunksize"
-	JfrSyncAnnotation         = "jafra.io/jfrsync"
-	ProfileAnnotation         = "jafra.io/profile"
-	NmtAnnotation             = "jafra.io/nmt"
-	AllocLiveAnnotation       = "jafra.io/alloc-live"
-	InjectedAnnotation        = "jafra.io/injected"
-	InjectedVersionAnnotation = "jafra.io/injected-version"
+	EnabledLabel               = "jafra.io/enabled"
+	ModeLabel                  = "jafra.io/mode"
+	ContainersAnnotation       = "jafra.io/containers"
+	EventAnnotation            = "jafra.io/event"
+	IntervalAnnotation         = "jafra.io/interval"
+	WallAnnotation             = "jafra.io/wall"
+	AllocAnnotation            = "jafra.io/alloc"
+	LiveAnnotation             = "jafra.io/live"
+	LockAnnotation             = "jafra.io/lock"
+	NativeMemAnnotation        = "jafra.io/nativemem"
+	NativeLockAnnotation       = "jafra.io/nativelock"
+	MemLimitAnnotation         = "jafra.io/memlimit"
+	LoopAnnotation             = "jafra.io/loop"
+	ChunkTimeAnnotation        = "jafra.io/chunktime"
+	ChunkAgeAnnotation         = "jafra.io/chunk-age"
+	ChunkSizeAnnotation        = "jafra.io/chunksize"
+	JfrSyncAnnotation          = "jafra.io/jfrsync"
+	ProfileAnnotation          = "jafra.io/profile"
+	JdkNmtAnnotation           = "jafra.io/jdk-nmt"
+	LatencyThresholdAnnotation = "jafra.io/latency-threshold"
+	AllocLiveAnnotation        = "jafra.io/alloc-live"
+	InjectedAnnotation         = "jafra.io/injected"
+	InjectedVersionAnnotation  = "jafra.io/injected-version"
 
 	EnabledValue   = "true"
 	ContinuousMode = "continuous"
 
-	DefaultEvent      = "ctimer"
-	DefaultInterval   = "20ms"
-	DefaultWall       = "100ms"
-	DefaultAlloc      = "1m"
-	DefaultLock       = "5ms"
-	DefaultNativeMem  = "2m"
-	DefaultNativeLock = "5ms"
-	DefaultMemLimit   = "128m"
-	DefaultLoop       = "10m"
-	DefaultChunkTime  = "5s"
-	DefaultChunkSize  = "32m"
-	DefaultProfile    = "medium"
-	DefaultNmt        = "summary"
+	DefaultEvent            = "ctimer"
+	DefaultInterval         = "10ms"
+	DefaultWall             = "100ms"
+	DefaultAlloc            = "1m"
+	DefaultLock             = "1ms"
+	DefaultNativeMem        = "16m"
+	DefaultMemLimit         = "32m"
+	DefaultLoop             = "5s"
+	DefaultProfile          = "medium"
+	DefaultLatencyThreshold = "500 ms"
 
 	jfcDirectory         = "/jafra-agent"
-	minChunkSeconds      = 5
 	nativeMemoryTracking = "-XX:NativeMemoryTracking=summary"
 )
 
 var (
-	eventPattern    = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
-	durationPattern = regexp.MustCompile(`^([1-9][0-9]*)(ns|us|ms|s|m|h|d)$`)
-	sizePattern     = regexp.MustCompile(`^[1-9][0-9]*[kmg]$`)
-	allowedEvents   = map[string]struct{}{
+	eventPattern     = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	durationPattern  = regexp.MustCompile(`^([1-9][0-9]*)(ns|us|ms|s|m|h|d)$`)
+	latencyPattern   = regexp.MustCompile(`^([0-9]+)[ ]*(ns|us|ms|s|m|h|d)$`)
+	sizePattern      = regexp.MustCompile(`^[1-9][0-9]*[kmg]$`)
+	latencyUnitNanos = map[string]uint64{
+		"ns": 1,
+		"us": 1000,
+		"ms": 1000 * 1000,
+		"s":  1000 * 1000 * 1000,
+		"m":  60 * 1000 * 1000 * 1000,
+		"h":  60 * 60 * 1000 * 1000 * 1000,
+		"d":  24 * 60 * 60 * 1000 * 1000 * 1000,
+	}
+	allowedEvents = map[string]struct{}{
 		"ctimer": {},
 		"cpu":    {},
 		"wall":   {},
@@ -79,25 +86,32 @@ var (
 		"default": {},
 		"profile": {},
 	}
-	allowedNmt = map[string]struct{}{
-		"summary": {},
-		"off":     {},
+	// removedAnnotations are ignored. Each one produces a warning.
+	removedAnnotations = []string{
+		NativeLockAnnotation,
+		ChunkTimeAnnotation,
+		ChunkAgeAnnotation,
+		ChunkSizeAnnotation,
+		LiveAnnotation,
+		AllocLiveAnnotation,
+		LoopAnnotation,
+		"jafra.io/nmt",
 	}
 	presetKnobs = map[string]ProfilerConfig{
 		"aggressive": {
 			Event: "ctimer", Interval: "10ms", Wall: "50ms", Alloc: "512k",
-			Lock: "1ms", NativeMem: "1m", NativeLock: "1ms",
-			MemLimit: "128m", Loop: "10m", ChunkTime: "5s", ChunkSize: "32m",
+			Lock: "100us", NativeMem: "2m", JStackDepth: 1024,
+			MemLimit: "64m", Loop: "5s",
 		},
 		"medium": {
-			Event: "ctimer", Interval: "20ms", Wall: "100ms", Alloc: "1m",
-			Lock: "5ms", NativeMem: "2m", NativeLock: "5ms",
-			MemLimit: "128m", Loop: "10m", ChunkTime: "5s", ChunkSize: "32m",
+			Event: "ctimer", Interval: "10ms", Wall: "100ms", Alloc: "1m",
+			Lock: "1ms", NativeMem: "16m", JStackDepth: 512,
+			MemLimit: "32m", Loop: "5s",
 		},
 		"low": {
-			Event: "ctimer", Interval: "50ms", Wall: "200ms", Alloc: "4m",
-			Lock: "20ms", NativeLock: "20ms",
-			MemLimit: "128m", Loop: "15m", ChunkTime: "5s", ChunkSize: "32m",
+			Event: "ctimer", Interval: "20ms", Wall: "200ms", Alloc: "4m",
+			Lock: "10ms", NativeMem: "64m", JStackDepth: 512,
+			MemLimit: "16m", Loop: "5s",
 		},
 	}
 )
@@ -108,21 +122,19 @@ type Selection struct {
 }
 
 type ProfilerConfig struct {
-	Profile    string
-	Event      string
-	Interval   string
-	Wall       string
-	Alloc      string
-	Live       bool
-	Lock       string
-	NativeMem  string
-	NativeLock string
-	MemLimit   string
-	Loop       string
-	ChunkTime  string
-	ChunkSize  string
-	JfrSync    string
-	Nmt        string
+	Profile          string
+	Event            string
+	Interval         string
+	Wall             string
+	Alloc            string
+	Lock             string
+	NativeMem        string
+	JStackDepth      int
+	MemLimit         string
+	Loop             string
+	JfrSync          string
+	JdkNmt           bool
+	LatencyThreshold string
 }
 
 // Select returns the target containers for a Pod that explicitly opts in.
@@ -176,101 +188,73 @@ func Select(pod *corev1.Pod) (Selection, error) {
 }
 
 // ResolveProfilerConfig applies the selected JFC preset, then any explicit
-// per-knob annotations. Chunk time stays at 5s unless the pod opts into a
-// longer interval, because async-profiler holds the open chunk in memory
-// until chunktime elapses.
-func ResolveProfilerConfig(pod *corev1.Pod) (ProfilerConfig, error) {
+// per-knob annotations. loop stays at 5s. Removed annotations are ignored
+// and returned as warnings.
+func ResolveProfilerConfig(pod *corev1.Pod) (ProfilerConfig, []string, error) {
 	profileName := strings.ToLower(valueOrDefault(pod.Annotations, ProfileAnnotation, DefaultProfile))
 	if _, allowed := allowedProfiles[profileName]; !allowed {
-		return ProfilerConfig{}, fmt.Errorf("unsupported %s value %q", ProfileAnnotation, profileName)
+		return ProfilerConfig{}, nil, fmt.Errorf("unsupported %s value %q", ProfileAnnotation, profileName)
 	}
 	preset := presetKnobs[profileName]
 	annotations := pod.Annotations
 
 	profile := ProfilerConfig{
-		Profile:    profileName,
-		Event:      overrideOr(annotations, EventAnnotation, preset.Event),
-		Interval:   overrideOr(annotations, IntervalAnnotation, preset.Interval),
-		Wall:       overrideOr(annotations, WallAnnotation, preset.Wall),
-		Alloc:      overrideOr(annotations, AllocAnnotation, preset.Alloc),
-		Lock:       overrideOr(annotations, LockAnnotation, preset.Lock),
-		NativeMem:  overrideOr(annotations, NativeMemAnnotation, preset.NativeMem),
-		NativeLock: overrideOr(annotations, NativeLockAnnotation, preset.NativeLock),
-		MemLimit:   overrideOr(annotations, MemLimitAnnotation, preset.MemLimit),
-		Loop:       overrideOr(annotations, LoopAnnotation, preset.Loop),
-		ChunkSize:  overrideOr(annotations, ChunkSizeAnnotation, preset.ChunkSize),
-		Nmt:        strings.ToLower(valueOrDefault(annotations, NmtAnnotation, DefaultNmt)),
+		Profile:     profileName,
+		Event:       overrideOr(annotations, EventAnnotation, preset.Event),
+		Interval:    overrideOr(annotations, IntervalAnnotation, preset.Interval),
+		Wall:        overrideOr(annotations, WallAnnotation, preset.Wall),
+		Alloc:       overrideOr(annotations, AllocAnnotation, preset.Alloc),
+		Lock:        overrideOr(annotations, LockAnnotation, preset.Lock),
+		NativeMem:   overrideOr(annotations, NativeMemAnnotation, preset.NativeMem),
+		JStackDepth: preset.JStackDepth,
+		MemLimit:    overrideOr(annotations, MemLimitAnnotation, preset.MemLimit),
+		Loop:        preset.Loop,
 	}
 
-	chunkTime, chunkAnnotation, err := resolveChunkTime(annotations, preset.ChunkTime)
-	if err != nil {
-		return ProfilerConfig{}, err
-	}
-	profile.ChunkTime = chunkTime
-
-	live, err := resolveLive(annotations)
-	if err != nil {
-		return ProfilerConfig{}, err
-	}
-	profile.Live = live
+	jdkNmt, nmtWarnings := resolveJdkNmt(annotations)
+	profile.JdkNmt = jdkNmt
+	warnings := append(removedAnnotationWarnings(annotations), nmtWarnings...)
 
 	jfrSync, err := resolveJfrSync(annotations, profileName)
 	if err != nil {
-		return ProfilerConfig{}, err
+		return ProfilerConfig{}, nil, err
 	}
 	profile.JfrSync = jfrSync
 
 	if len(profile.Event) > 64 || !eventPattern.MatchString(profile.Event) {
-		return ProfilerConfig{}, fmt.Errorf("invalid %s value %q", EventAnnotation, profile.Event)
+		return ProfilerConfig{}, nil, fmt.Errorf("invalid %s value %q", EventAnnotation, profile.Event)
 	}
 	if _, allowed := allowedEvents[profile.Event]; !allowed {
-		return ProfilerConfig{}, fmt.Errorf("unsupported %s value %q", EventAnnotation, profile.Event)
+		return ProfilerConfig{}, nil, fmt.Errorf("unsupported %s value %q", EventAnnotation, profile.Event)
 	}
 	if err := requireDuration(IntervalAnnotation, profile.Interval); err != nil {
-		return ProfilerConfig{}, err
+		return ProfilerConfig{}, nil, err
 	}
 	if err := requireDuration(WallAnnotation, profile.Wall); err != nil {
-		return ProfilerConfig{}, err
+		return ProfilerConfig{}, nil, err
 	}
 	if err := requireDuration(LockAnnotation, profile.Lock); err != nil {
-		return ProfilerConfig{}, err
-	}
-	if profile.NativeLock != "" {
-		if err := requireDuration(NativeLockAnnotation, profile.NativeLock); err != nil {
-			return ProfilerConfig{}, err
-		}
+		return ProfilerConfig{}, nil, err
 	}
 	if err := requireSize(AllocAnnotation, profile.Alloc); err != nil {
-		return ProfilerConfig{}, err
+		return ProfilerConfig{}, nil, err
 	}
 	if strings.EqualFold(profile.NativeMem, "off") {
 		profile.NativeMem = ""
 	} else if profile.NativeMem != "" {
 		if err := requireSize(NativeMemAnnotation, profile.NativeMem); err != nil {
-			return ProfilerConfig{}, err
+			return ProfilerConfig{}, nil, err
 		}
 	}
 	if err := requireSize(MemLimitAnnotation, profile.MemLimit); err != nil {
-		return ProfilerConfig{}, err
-	}
-	if _, err := durationSeconds(profile.Loop); err != nil {
-		return ProfilerConfig{}, fmt.Errorf("invalid %s value %q: %w", LoopAnnotation, profile.Loop, err)
-	}
-	chunkSeconds, err := durationSeconds(profile.ChunkTime)
-	if err != nil {
-		return ProfilerConfig{}, fmt.Errorf("invalid %s value %q: %w", chunkAnnotation, profile.ChunkTime, err)
-	}
-	if chunkSeconds < minChunkSeconds {
-		return ProfilerConfig{}, fmt.Errorf("%s must be at least 5s", chunkAnnotation)
-	}
-	if err := requireSize(ChunkSizeAnnotation, profile.ChunkSize); err != nil {
-		return ProfilerConfig{}, err
-	}
-	if _, allowed := allowedNmt[profile.Nmt]; !allowed {
-		return ProfilerConfig{}, fmt.Errorf("unsupported %s value %q", NmtAnnotation, profile.Nmt)
+		return ProfilerConfig{}, nil, err
 	}
 
-	return profile, nil
+	threshold, latencyWarnings := resolveLatencyThreshold(annotations, profile.JfrSync)
+	profile.LatencyThreshold = threshold
+	warnings = append(warnings, latencyWarnings...)
+
+	return profile, warnings, nil
 }
 
 func (c ProfilerConfig) AgentOption(libraryPath string) string {
@@ -280,22 +264,16 @@ func (c ProfilerConfig) AgentOption(libraryPath string) string {
 		"interval=" + c.Interval,
 		"wall=" + c.Wall,
 		"alloc=" + c.Alloc,
+		"lock=" + c.Lock,
 	}
-	if c.Live {
-		parts = append(parts, "live")
-	}
-	parts = append(parts, "lock="+c.Lock)
 	if c.NativeMem != "" {
-		parts = append(parts, "nativemem="+c.NativeMem)
-	}
-	if c.NativeLock != "" {
-		parts = append(parts, "nativelock="+c.NativeLock)
+		parts = append(parts, "nativemem="+c.NativeMem, "nofree")
 	}
 	parts = append(parts,
+		"cstack=vm",
+		"jstackdepth="+strconv.Itoa(c.JStackDepth),
 		"memlimit="+c.MemLimit,
 		"loop="+c.Loop,
-		"chunktime="+c.ChunkTime,
-		"chunksize="+c.ChunkSize,
 	)
 	if c.JfrSync != "" {
 		parts = append(parts, "jfrsync="+c.JfrSync)
@@ -304,58 +282,34 @@ func (c ProfilerConfig) AgentOption(libraryPath string) string {
 	return "-agentpath:" + libraryPath + "=" + strings.Join(parts, ",")
 }
 
-// NativeMemoryOption is the JVM flag for jafra.io/nmt=summary.
+// NativeMemoryOption is the JVM flag injected when jafra.io/jdk-nmt is enabled.
 // An empty string means the webhook must not inject the flag.
 func (c ProfilerConfig) NativeMemoryOption() string {
-	if c.Nmt == "summary" {
+	if c.JdkNmt {
 		return nativeMemoryTracking
 	}
 	return ""
 }
 
-func resolveChunkTime(annotations map[string]string, preset string) (string, string, error) {
-	age, hasAge := annotationValue(annotations, ChunkAgeAnnotation)
-	chunk, hasChunk := annotationValue(annotations, ChunkTimeAnnotation)
-	switch {
-	case hasAge && hasChunk && age != chunk:
-		return "", "", fmt.Errorf("%s and %s disagree: %q vs %q", ChunkAgeAnnotation, ChunkTimeAnnotation, age, chunk)
-	case hasChunk:
-		return chunk, ChunkTimeAnnotation, nil
-	case hasAge:
-		return age, ChunkAgeAnnotation, nil
-	default:
-		return preset, ChunkTimeAnnotation, nil
-	}
-}
-
-func resolveLive(annotations map[string]string) (bool, error) {
-	allocRaw, hasAlloc := annotationValue(annotations, AllocLiveAnnotation)
-	liveRaw, hasLive := annotationValue(annotations, LiveAnnotation)
-	if !hasAlloc && !hasLive {
+func resolveJdkNmt(annotations map[string]string) (bool, []string) {
+	raw, present := annotationValue(annotations, JdkNmtAnnotation)
+	if !present {
 		return false, nil
 	}
-	var allocLive bool
-	var err error
-	if hasAlloc {
-		allocLive, err = parseBool(strings.ToLower(allocRaw), AllocLiveAnnotation)
-		if err != nil {
-			return false, err
+	if strings.EqualFold(raw, "enabled") {
+		return true, nil
+	}
+	return false, []string{fmt.Sprintf("%s value %q is not \"enabled\"; NMT stays off", JdkNmtAnnotation, raw)}
+}
+
+func removedAnnotationWarnings(annotations map[string]string) []string {
+	var warnings []string
+	for _, key := range removedAnnotations {
+		if _, present := annotationValue(annotations, key); present {
+			warnings = append(warnings, fmt.Sprintf("%s is no longer supported and was ignored", key))
 		}
 	}
-	var live bool
-	if hasLive {
-		live, err = parseBool(strings.ToLower(liveRaw), LiveAnnotation)
-		if err != nil {
-			return false, err
-		}
-	}
-	if hasAlloc && hasLive && allocLive != live {
-		return false, fmt.Errorf("%s and %s disagree", AllocLiveAnnotation, LiveAnnotation)
-	}
-	if hasLive {
-		return live, nil
-	}
-	return allocLive, nil
+	return warnings
 }
 
 func resolveJfrSync(annotations map[string]string, profileName string) (string, error) {
@@ -398,17 +352,6 @@ func valueOrDefault(values map[string]string, key, defaultValue string) string {
 	return defaultValue
 }
 
-func parseBool(value, annotation string) (bool, error) {
-	switch value {
-	case "true":
-		return true, nil
-	case "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid %s value %q", annotation, value)
-	}
-}
-
 func requireDuration(annotation, value string) error {
 	if !durationPattern.MatchString(value) {
 		return fmt.Errorf("invalid %s value %q", annotation, value)
@@ -423,29 +366,61 @@ func requireSize(annotation, value string) error {
 	return nil
 }
 
-func durationSeconds(value string) (uint64, error) {
-	matches := durationPattern.FindStringSubmatch(value)
+func resolveLatencyThreshold(annotations map[string]string, jfrSync string) (string, []string) {
+	raw, present := annotationValue(annotations, LatencyThresholdAnnotation)
+	if !present {
+		return DefaultLatencyThreshold, nil
+	}
+	canonical, warning := canonicalLatency(raw)
+	var warnings []string
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if _, builtin := jfrSyncBuiltin[jfrSync]; jfrSync == "" || builtin {
+		warnings = append(warnings, LatencyThresholdAnnotation+" has no effect unless the Jafra JFC preset is used")
+	}
+	return canonical, warnings
+}
+
+func canonicalLatency(raw string) (string, string) {
+	matches := latencyPattern.FindStringSubmatch(raw)
 	if matches == nil {
-		return 0, fmt.Errorf("expected a positive integer followed by ns, us, ms, s, m, h, or d")
+		return DefaultLatencyThreshold, latencyParseWarning(raw)
 	}
 	amount, err := strconv.ParseUint(matches[1], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("duration is too large")
+		return DefaultLatencyThreshold, latencyParseWarning(raw)
 	}
-	multiplier := map[string]uint64{
-		"ns": 0,
-		"us": 0,
-		"ms": 0,
-		"s":  1,
-		"m":  60,
-		"h":  60 * 60,
-		"d":  24 * 60 * 60,
-	}[matches[2]]
-	if multiplier == 0 {
-		return 0, fmt.Errorf("duration must be at least one second")
+	multiplier := latencyUnitNanos[matches[2]]
+	if multiplier == 0 || amount > ^uint64(0)/multiplier {
+		return DefaultLatencyThreshold, latencyParseWarning(raw)
 	}
-	if amount > ^uint64(0)/multiplier {
-		return 0, fmt.Errorf("duration is too large")
+	nanos := amount * multiplier
+	const floorNanos = 100 * 1000 * 1000
+	if nanos < floorNanos {
+		return "100 ms", latencyFloorWarning(raw)
 	}
-	return amount * multiplier, nil
+	return formatLatency(nanos), ""
+}
+
+func latencyParseWarning(raw string) string {
+	return fmt.Sprintf("%s value %q is not a JFR timespan; using 500 ms", LatencyThresholdAnnotation, raw)
+}
+
+func latencyFloorWarning(raw string) string {
+	return fmt.Sprintf("%s value %q is below the 100 ms floor; using 100 ms", LatencyThresholdAnnotation, raw)
+}
+
+func formatLatency(nanos uint64) string {
+	const (
+		millisecond = 1000 * 1000
+		microsecond = 1000
+	)
+	if nanos%millisecond == 0 {
+		return fmt.Sprintf("%d ms", nanos/millisecond)
+	}
+	if nanos%microsecond == 0 {
+		return fmt.Sprintf("%d us", nanos/microsecond)
+	}
+	return fmt.Sprintf("%d ns", nanos)
 }
